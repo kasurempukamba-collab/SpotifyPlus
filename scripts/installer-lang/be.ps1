@@ -4,7 +4,7 @@
     DefenderFailed  = "Microsoft Defender exclusions were not added"
     Welcome         = "
 ╔════════════════════════════════════════╗
-║ Сардэчна запрашаем у SpotX для Windows ║
+║ Сардэчна запрашаем у SpotifyPlus для Windows ║
 ╚════════════════════════════════════════╝"
     Incorrect       = "Вой, няправільнае значэнне,"
     Incorrect2      = "увядзіце зноў праз "
@@ -23,7 +23,7 @@
     OldV3           = "Хочаце абнавіць? [Y/N]"
     DelOrOver       = "Выдаліць бягучую версію ({0}) або ўсталяваць паверх яе? Y [Выдаліць] / N [Усталяваць паверх]"
     DelSpotify      = "Выдаленне Spotify..."
-    NewV2           = "Ваша версія Spotify ({0}) не была пратэставана. Стабільная версія для SpotX — {1}"
+    NewV2           = "Ваша версія Spotify ({0}) не была пратэставана. Стабільная версія для SpotifyPlus — {1}"
     NewV3           = "Працягнуць з {0} (могуць узнікнуць памылкі)? [Y/N]"
     Recom           = "Усталяваць апошнюю версію {0}? [Y/N]"
     DownSpoti       = "Спампоўка і ўсталёўка Spotify"
@@ -38,8 +38,8 @@
     ModSpoti        = "Патчынг Spotify..."
     Error           = "Памылка"
     FileLocBroken   = "Месцазнаходжанне файлаў Spotify пашкоджана, выдаліце кліент Spotify і запусціце сцэнарый зноў"
-    Spicetify       = "Spicetify выяўлены, ён павінен быць усталяваны пасля SpotX, адкрыць рэкамендаваныя дзеянні ў FAQ? [Y/N]"
-    NoRestore       = "SpotX ужо ўсталяваны, xpui.bak не знойдзены. Калі ласка, выдаліце кліент Spotify і запусціце Install.bat зноў"
+    Spicetify       = "Spicetify выяўлены, ён павінен быць усталяваны пасля SpotifyPlus, адкрыць рэкамендаваныя дзеянні ў FAQ? [Y/N]"
+    NoRestore       = "SpotifyPlus ужо ўсталяваны, xpui.bak не знойдзены. Калі ласка, выдаліце кліент Spotify і запусціце Install.bat зноў"
     InstallComplete = "Усталёўка завершана"
     HostInfo        = "Непажаданыя URL-адрасы знойдзены ў файле hosts"
     HostBak         = "Рэзервовае капіраванне hosts.bak..."

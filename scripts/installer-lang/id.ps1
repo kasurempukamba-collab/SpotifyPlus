@@ -4,7 +4,7 @@
     DefenderFailed  = "Microsoft Defender exclusions were not added"
     Welcome         = "
 ╔═══════════════════════════════════════╗
-║ Selamat datang di SpotX untuk Windows ║
+║ Selamat datang di SpotifyPlus untuk Windows ║
 ╚═══════════════════════════════════════╝"
     Incorrect       = "Oops, nilai salah,"
     Incorrect2      = "masukkan lagi "
@@ -38,8 +38,8 @@
     ModSpoti        = "Memasang patch ke Spotify..."
     Error           = "Kesalahan"
     FileLocBroken   = "Lokasi file Spotify rusak, uninstall aplikasi Spotify dan jalankan skrip lagi"
-    Spicetify       = "Spicetify terdeteksi, harus diinstal setelah SpotX, buka tindakan yang direkomendasikan di FAQ? [Y/N]"
-    NoRestore       = "SpotX sudah diinstal, xpui.bak tidak ditemukan. `nSilakan uninstall aplikasi Spotify dan jalankan Install.bat lagi"
+    Spicetify       = "Spicetify terdeteksi, harus diinstal setelah SpotifyPlus, buka tindakan yang direkomendasikan di FAQ? [Y/N]"
+    NoRestore       = "SpotifyPlus sudah diinstal, xpui.bak tidak ditemukan. `nSilakan uninstall aplikasi Spotify dan jalankan Install.bat lagi"
     InstallComplete = "instalasi selesai"
     HostInfo        = "URL yang tidak diinginkan ditemukan dalam file host"
     HostBak         = "Membuat cadangan hosts.bak..."

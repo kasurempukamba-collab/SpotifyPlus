@@ -4,7 +4,7 @@
     DefenderFailed  = "Microsoft Defender exclusions were not added"
     Welcome         = "
 ╔══════════════════════════════════╗
-║ Bienvenue sur SpotX pour Windows ║
+║ Bienvenue sur SpotifyPlus pour Windows ║
 ╚══════════════════════════════════╝"
     Incorrect       = "Oups, une valeur est incorrecte,"
     Incorrect2      = "veuillez recommencer "
@@ -38,8 +38,8 @@
     ModSpoti        = "Modification de Spotify..."
     Error           = "Erreur"
     FileLocBroken   = "L'emplacement des fichiers de Spotify est invalide, désinstallez Spotify et lancez de nouveau le script"
-    Spicetify       = "Spicetify détecté, il faut l'installer après SpotX, ouvrir les actions recommandées dans la FAQ ? [Y/N]"
-    NoRestore       = "SpotX a déjà été installé, xpui.bak introuvable. `nMerci de désinstaller Spotify et de lancer à nouveau le script"
+    Spicetify       = "Spicetify détecté, il faut l'installer après SpotifyPlus, ouvrir les actions recommandées dans la FAQ ? [Y/N]"
+    NoRestore       = "SpotifyPlus a déjà été installé, xpui.bak introuvable. `nMerci de désinstaller Spotify et de lancer à nouveau le script"
     InstallComplete = "installation terminée"
     HostInfo        = "URLs indésirables trouvées dans le fichier hosts"
     HostBak         = "Sauvegarde de hosts.bak..."
