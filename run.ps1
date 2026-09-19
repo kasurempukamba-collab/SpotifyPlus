@@ -5192,7 +5192,7 @@ if ($test_spa) {
                 }
                 else {
                     $binary_exe_bak = [System.IO.Path]::GetFileName($exe_bak)
-                    Write-Warning ("Backup copy {0} not found. Please reinstall Spotify and run SpotX again" -f $binary_exe_bak)
+                    Write-Warning ("Backup copy {0} not found. Please reinstall Spotify and run SpotifyPlus again" -f $binary_exe_bak)
                     if (-not $no_pause) { Pause }
                     Exit
                 }
@@ -5203,7 +5203,7 @@ if ($test_spa) {
                 }
                 else {
                     $binary_chrome_elf_bak = [System.IO.Path]::GetFileName($chrome_elf_bak)
-                    Write-Warning ("Backup copy {0} not found. Please reinstall Spotify and run SpotX again" -f $binary_chrome_elf_bak)
+                    Write-Warning ("Backup copy {0} not found. Please reinstall Spotify and run SpotifyPlus again" -f $binary_chrome_elf_bak)
                     if (-not $no_pause) { Pause }
                     Exit
                 }
@@ -5464,7 +5464,7 @@ if ($regex1 -and $regex2 -and $regex3 -and $regex4 -and $regex5) {
 
 if (-not (Test-Path -LiteralPath $spotify_binary_bak)) {
     $name_binary = [System.IO.Path]::GetFileName($spotify_binary_bak)
-    Write-Warning ("Backup copy {0} not found. Please reinstall Spotify and run SpotX again" -f $name_binary)
+    Write-Warning ("Backup copy {0} not found. Please reinstall Spotify and run SpotifyPlus again" -f $name_binary)
     if (-not $no_pause) { Pause }
     Exit
 }
