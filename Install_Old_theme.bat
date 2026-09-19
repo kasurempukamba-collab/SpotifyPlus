@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 
 :: Line for changing SpotifyPlus parameters, each parameter should be separated by a space
 set param=-v 1.2.13.661.ga588f749 -confirm_spoti_recomended_over -block_update_on -no_pause

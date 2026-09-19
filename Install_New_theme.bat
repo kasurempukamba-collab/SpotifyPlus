@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 
 :: Line for changing SpotifyPlus parameters, each parameter should be separated by a space
 set param=-new_theme -no_pause

@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 
 :: Line for changing SpotifyPlus parameters, each parameter should be separated by a space
 set param=-confirm_uninstall_ms_spoti -confirm_spoti_recomended_over -podcasts_off -block_update_on -start_spoti -new_theme -adsections_off -lyrics_stat spotify -no_pause
