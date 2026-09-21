@@ -1,0 +1,774 @@
+diff --git a/README.md b/README.md
+index 862641b..e986595 100644
+--- a/README.md
++++ b/README.md
+@@ -14,7 +14,7 @@ Spotify Desktop enhancement toolkit for Windows, derived from SpotX.
+ - Optional content filtering
+ - Spotify update control
+ - Experimental feature tweaks
+-- Analytics blocking
++- Blocks Spotify's own built-in analytics/logging calls (see "Privacy & telemetry" below for SpotifyPlus's own optional reporting helper, which is a separate thing and is off by default)
+ - Advanced installation parameters
+ 
+ ## Install
+@@ -33,8 +33,26 @@ Or run the patcher directly from PowerShell:
+ ## Uninstall
+ Run Uninstall.bat.
+ 
++## Privacy & telemetry
++By default, SpotifyPlus makes network requests only to Spotify's own servers, to `github.com`/`raw.githubusercontent.com` (this repository, to fetch patch instructions and helper scripts) and to `loadspot.amd64fox1.workers.dev` (a third-party mirror used to download the Spotify installer itself - see "Security" below for what that does and does not guarantee).
++
++SpotifyPlus also ships an **optional, opt-in** helper, `checkVersion.js` (`-sendversion_on`), which is **disabled by default**. If you explicitly pass `-sendversion_on`, it will, inside the Spotify client:
++1. Read the `Authorization` bearer token that the official Spotify client itself sends to `spclient.wg.spotify.com` (this is the Spotify client's own short-lived session token; SpotifyPlus does not use or need your Spotify password).
++2. Use that token to call Spotify's own official update endpoint (`.../desktop-update/v2/update`) for Windows and macOS, x64 and arm64, to discover current installer/update download links.
++3. Send the discovered links, this script's version, and basic client diagnostics (OS/user agent, detected Spotify app version, language, and which platform lookups succeeded or failed - **never the token value itself**, only a boolean flag noting whether one was found) to a third-party endpoint, `spotify-ingest-admin.amd64fox1.workers.dev`, operated by the upstream SpotX project. In an error/diagnostic ("forensic") path, this can also include the raw response body from Spotify's update endpoint for the request that failed.
++
++This exists so that the shared version table this project (and other SpotX-family forks) rely on to find current Spotify installer links stays up to date, contributed by opted-in users. If you do not explicitly pass `-sendversion_on`, none of this runs and none of this data is sent. `-sendversion_off` still works as a deprecated no-op for backward compatibility, since "off" is now the default.
++
++The `goofyHistory.js` helper (listening-history logging) is separately opt-in and requires you to supply your **own** destination (`-urlform_goofy`/`-idbox_goofy`, e.g. a Google Form you control) - SpotifyPlus and upstream SpotX have no access to that data.
++
++## Security
++- **Resource integrity:** run.ps1 fetches several files from this repository at runtime (installer language files, JS/CSS injected into the Spotify client, `patches.json`, the Russian translation augmentation, and `res/login.spa`). Every one of those is verified against a SHA-256 hash pinned inside run.ps1 itself before it is executed, injected into the Spotify client, or parsed as patch instructions. If a fetched file doesn't match, SpotifyPlus refuses to use it and tells you to get the latest run.ps1, instead of silently proceeding. See the "Resource integrity verification" comment near the top of run.ps1 for exactly how this works and its documented scope/limits, and `scripts/Update-IntegrityManifest.ps1` for how the pinned hashes are regenerated at release time.
++- **What this does *not* cover:** the pinned-hash mechanism only applies to files hosted in *this* repository. It does not and cannot verify the third-party `LoaderSpot/table` version manifest, or the Spotify installer binary served from `loadspot.amd64fox1.workers.dev` - this repository has no authority to publish a trusted hash for content it doesn't own. Instead, the downloaded installer's size is compared against the size published in the version manifest as a best-effort check that catches truncated/corrupted downloads and wrong-asset swaps; it is **not** a cryptographic guarantee and cannot catch a same-size tampered file. If you need a stronger guarantee for a specific version, verify the downloaded installer independently before trusting it.
++- **run.ps1 itself is not code-signed.** `Install_*.bat`/`Uninstall.bat` download run.ps1 over plain HTTPS and execute it with `-ExecutionPolicy Bypass`, with no separate signature check on run.ps1 itself. All of the integrity verification above is only as trustworthy as the copy of run.ps1 you started from. If you want to double-check what you're about to run, read it (it's plain text) or compare it against the copy published in this repository before running it.
++- Found a security issue? Please open an issue (or, for something sensitive, contact the maintainer directly) rather than a public pull request with exploit details.
++
+ ## Upstream
+ SpotifyPlus is derived from SpotX. The upstream MIT license and attribution are preserved in LICENSE. See UPSTREAM.md for details.
+ 
+ ## Disclaimer
+-SpotifyPlus modifies the installed Spotify desktop client. Use it at your own risk. SpotifyPlus is not affiliated with Spotify Technology S.A.
++SpotifyPlus patches the official Spotify desktop client binaries and bundled JavaScript/CSS to remove ads and unlock certain experimental/premium-gated features. **This is a violation of Spotify's Terms of Service.** Spotify can detect client modification and may, at its discretion, take action against the account used with a patched client, up to and including suspension - this is a real, not theoretical, risk, independent of anything in "Security" above. Use it at your own risk and on an account you're prepared to lose. SpotifyPlus is not affiliated with, endorsed by, or supported by Spotify Technology S.A.
+diff --git a/UPSTREAM.md b/UPSTREAM.md
+index 4cc201a..7dee8b1 100644
+--- a/UPSTREAM.md
++++ b/UPSTREAM.md
+@@ -11,6 +11,7 @@ SpotifyPlus is based on the Windows version of SpotX.
+ - Rebranded the Windows project as SpotifyPlus.
+ - Changed installer bootstrap URLs to the SpotifyPlus repository.
+ - Added SpotifyPlus-specific documentation.
++- Added resource integrity verification (SHA-256 pinning) for every file run.ps1 fetches from this repository at runtime, a best-effort size check for the downloaded Spotify installer, and made the `checkVersion.js` version-reporting helper opt-in (`-sendversion_on`) instead of opt-out. These are SpotifyPlus-specific hardening changes not present upstream; see README "Security" and "Privacy & telemetry". They do not change what any patch does to the Spotify client, only how run.ps1 fetches and verifies the code/instructions that implement those patches.
+ - Future project-specific changes will be maintained separately from the upstream patch engine.
+ 
+ The upstream LICENSE file is preserved in this repository.
+diff --git a/run.ps1 b/run.ps1
+index 16c34b6..c011213 100644
+--- a/run.ps1
++++ b/run.ps1
+@@ -119,8 +119,8 @@ param
+     [Parameter(HelpMessage = 'Do not create desktop shortcut.')]
+     [switch]$no_shortcut,
+ 
+-    [Parameter(HelpMessage = 'Disable sending new versions')]
+-    [switch]$sendversion_off,
++    [Parameter(HelpMessage = 'Opt-in: allow the client-version reporting helper (checkVersion.js) to run. It intercepts the Spotify client authorization token to query the official Spotify update endpoint, then reports the discovered download links and basic client diagnostics (no token value) to a third-party endpoint. Disabled by default. See README "Privacy & telemetry" for the full data flow.')]
++    [switch]$sendversion_on,
+ 
+     [Parameter(HelpMessage = 'Static color for lyrics.')]
+     [ArgumentCompleter({ param($cmd, $param, $wordToComplete)
+@@ -144,12 +144,193 @@ param
+ 
+     # Deprecated parameters
+     [Parameter(HelpMessage = 'Deprecated, old lyrics are enabled by default')]
+-    [switch]$old_lyrics
++    [switch]$old_lyrics,
++
++    [Parameter(HelpMessage = 'Deprecated, the client-version reporting helper is now opt-in by default. Use -sendversion_on to enable it instead.')]
++    [switch]$sendversion_off
+ )
+ 
+ # Ignore errors from `Stop-Process`
+ $PSDefaultParameterValues['Stop-Process:ErrorAction'] = [System.Management.Automation.ActionPreference]::SilentlyContinue
+ 
++# ---------------------------------------------------------------------------
++# Resource integrity verification
++#
++# Several resources are fetched at runtime from this repository (raw.github
++# usercontent.com, or the GitHub Pages mirror) and are then either executed
++# directly as PowerShell (installer language files), or injected as JavaScript
++# / CSS into the Spotify client, or used as JSON instructions that drive byte-
++# level patching of the Spotify client. If any single one of those files were
++# modified on the server without run.ps1 itself being modified, this script
++# would previously execute or inject that modified content without any check.
++#
++# $script:IntegrityManifest pins the SHA-256 hash of every such file as it
++# existed when this copy of run.ps1 was released. Assert-TrustedResource
++# verifies newly downloaded bytes against that pinned hash before they are
++# ever executed, injected, or parsed as patch instructions. A mismatch is
++# treated as fatal for that resource: SpotifyPlus will refuse to use it and
++# will tell the user to update to the latest run.ps1 instead of silently
++# proceeding.
++#
++# Scope and limits (please read before assuming this "fully" secures the
++# install):
++#   - This only covers files hosted in THIS repository. It intentionally does
++#     NOT attempt to verify the LoaderSpot/table version manifest or the
++#     Spotify installer binary itself, because this repository has no
++#     authority to publish a trusted hash for content it does not own -
++#     doing so would be a false sense of security. See downloadSp() for the
++#     separate, weaker (size-only) check that applies to the Spotify
++#     installer, and README "Security" for why a cryptographic check is not
++#     currently possible there.
++#   - This manifest is only as trustworthy as the copy of run.ps1 the user
++#     obtained in the first place. run.ps1 itself is not code-signed and is
++#     fetched over plain HTTPS by Install_*.bat/Uninstall.bat without a
++#     separate signature check. That remains a residual, documented risk -
++#     see README "Security".
++#   - Every dated release of SpotifyPlus regenerates this manifest from the
++#     files actually shipped in that release via
++#     scripts/Update-IntegrityManifest.ps1. If you edit any of the files
++#     listed below, re-run that script before publishing, or every user's
++#     next run will hard-fail the integrity check for that file.
++# ---------------------------------------------------------------------------
++$script:IntegrityManifest = @{
++    'css-helper/lyrics-color/colors.css' = '324399787dca4333961691539c88dc821a8f4ecfe0974d901b2845084fed297b'
++    'css-helper/lyrics-color/rules.css' = '21cbecbad2fbf87827a2b2810b3be8c80b6f1673dc116747ee1932fdbd6e637f'
++    'js-helper/checkVersion.js' = '4fac97a6993b3cffd91ac682dec214a5724fe9b6ca1d7df05cc4b9078f810ee3'
++    'js-helper/goofyHistory.js' = 'a088d90b4218f3e84d1efaec2b22867b03a4975e37455847eb21fb88df619893'
++    'js-helper/sectionBlock.js' = '19ae1839df58e2452fc84a74dc91de6632ad470b3d07dd776c42ee8bff7ee857'
++    'patches/Augmented translation/ru.json' = '494d829db0d3b7a148f4eefb24046c2a2208f01a7a8da53f2d1c3cc9689a0501'
++    'patches/patches.json' = 'bab64c0786a9ebdfb5da6c07edc2d925cfa7b9975b5761ec5e647c4486dbf3fc'
++    'res/login.spa' = '24d9f49b47eae234925718beec95740381d290fc424a73194bc64146880d2abe'
++    'scripts/installer-lang/be.ps1' = '3011866004c27cacb987412598e8b6d067705df0ae21765deab843e921a831da'
++    'scripts/installer-lang/bn.ps1' = '80560bba11a1c86186ddf6129cf826ae830ceedba1e102f4fd2e2a66655dcffb'
++    'scripts/installer-lang/cs.ps1' = '545440cc33889d22e8cfc54be8fe124d117f87c10a04cecd937972c5ec6b834d'
++    'scripts/installer-lang/de.ps1' = '43ca0b72672719c71506e368a730cbcdf9974d44a39ee04e0dfbb956a5a01d86'
++    'scripts/installer-lang/el.ps1' = 'dfd24f7a8467bdeeedccdf71d4b26f624fef72a1b9a3364daa49c85ce5b87d4e'
++    'scripts/installer-lang/en.ps1' = 'bced8f2a7c451364d57c41583a681152e790f69781f8b10bee0feed44a929887'
++    'scripts/installer-lang/es.ps1' = 'a281c59baeeda3f1c51a40400ce41a64915eeb12023420007926b7e5470cb858'
++    'scripts/installer-lang/fa.ps1' = '1f2ebb7f4650a9e00ffc4aa0a9c90d854e79194f4f5338d24d2853f73092f3d2'
++    'scripts/installer-lang/fi.ps1' = '5880298e175102b047d5f12879d0bf166f2b4639fcae15ff31a41e3d345be8fb'
++    'scripts/installer-lang/fil.ps1' = '631e6c046dd49a551ef74105323c881e9f7b1a95a2adbcb6b0d1621c9787b299'
++    'scripts/installer-lang/fr.ps1' = '203045e8b33bed598b22b4cc4782bb13a0cff423e8076d32d5ba34226d9e8a78'
++    'scripts/installer-lang/hi.ps1' = '14fbade3f2ec08acff93e83a53ec930b73cb5eae133625fa12fb2a85e96f7562'
++    'scripts/installer-lang/hu.ps1' = 'b75869812f3046735c4516fd481d91a8a9754dc47355fc4e36db565600cbddd6'
++    'scripts/installer-lang/id.ps1' = '404d72ba47d1f6e2e8774ee35f0e7e251634b3d9f494dc6d1d8790a76a48a745'
++    'scripts/installer-lang/it.ps1' = '77754a2ff4a2830996d1dbdb702ceff1d186745ff2eacb860bf9fb2017adaccb'
++    'scripts/installer-lang/ja.ps1' = '5e1505a77bc730656e9cfd594dcdd064738d9ef03da139690d3f9183da70e026'
++    'scripts/installer-lang/ka.ps1' = '8f6cb0d0a024b5ba7e920d29c7a36b1a0ed7489eb011c4ffbeae48ebcee7bac8'
++    'scripts/installer-lang/ko.ps1' = 'c110dea57d9b8e697ada3fe0cd950ec1000cacf08dbc47bb4e781b03b855b3da'
++    'scripts/installer-lang/lv.ps1' = '9f35552f9dc5a6665a76d49386f8451dfe3d042ad8ae45ebeab51165ed36152d'
++    'scripts/installer-lang/pl.ps1' = 'd2be4f9bd88e19e39ca08dea41d5d075e3f40cd9d6f82a121c3fb9943d344c5f'
++    'scripts/installer-lang/pt.ps1' = '8995b00ce961f3d99f6872d97359d93ab8078a90bc271392c863a051fd951a42'
++    'scripts/installer-lang/ro.ps1' = 'c57a256d7b5a1a65c0aac90062725ce6fa82d1996e65051afd8441de1750a18d'
++    'scripts/installer-lang/ru.ps1' = '52ce154f0048d6f317828d8673ecbcbb7a2034e0f07d26aa42f712c379596725'
++    'scripts/installer-lang/sk.ps1' = '4e38f8cc1636e9e0f102ccbb4d153ae995ab0cf5f1938ab78e78eb62ef5fe527'
++    'scripts/installer-lang/sr-Latn.ps1' = '12c30a9ceb2e738173f0445c27f93d5be2a34f1c239e92b22b9b0c8ab8bcce48'
++    'scripts/installer-lang/sr.ps1' = '27dc46cbd922d2c439d528b57f9cf1c7db155fa9bdaa8a86e66f5fea2726aa28'
++    'scripts/installer-lang/sv.ps1' = '9883fd6ea374323741744c0c9992356fd3f4a2620df6a866a5a88977b137f8f0'
++    'scripts/installer-lang/ta.ps1' = 'bcceed95f8b452441e64a1368b0c9334ce46796c534977ad903a1c62e9601e2b'
++    'scripts/installer-lang/tr.ps1' = 'a246b493fa4c63bbc80b160ea338623d82698d7846dc5e41f001c70d51c0b446'
++    'scripts/installer-lang/uk.ps1' = 'fadccee12f2cb982df11e7dc75741fa9d504f31cbd4a2a69a6e6f44cf8e197e2'
++    'scripts/installer-lang/vi.ps1' = '67b56c56447d72cdb978d7bb09c98f25279e38ab36e7e0d273edbb8663fa8873'
++    'scripts/installer-lang/zh-TW.ps1' = '1960303f99c133d7e9b3c32478bcaff331b0473f598a9fa97d50200a86e32408'
++    'scripts/installer-lang/zh.ps1' = '57faa77c4e11493dcef63c5a961131f8453c64a407fe7dbd25a228803306a1d0'
++}
++
++function Get-Sha256Hex {
++    <#
++        Returns the lowercase hex SHA-256 digest of the given bytes.
++    #>
++    param (
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyCollection()]
++        [byte[]]$Bytes
++    )
++
++    $sha256 = [System.Security.Cryptography.SHA256]::Create()
++    try {
++        $hashBytes = $sha256.ComputeHash($Bytes)
++        $sb = [System.Text.StringBuilder]::new($hashBytes.Length * 2)
++        foreach ($b in $hashBytes) {
++            [void]$sb.Append($b.ToString('x2'))
++        }
++        return $sb.ToString()
++    }
++    finally {
++        $sha256.Dispose()
++    }
++}
++
++function Assert-TrustedResource {
++    <#
++        Verifies that bytes downloaded from this repository match the SHA-256
++        pinned in $script:IntegrityManifest for $RelativePath. Returns $true
++        when the content is trusted and safe to execute/inject/parse, $false
++        otherwise. Callers MUST treat a $false return as fatal for that
++        resource and MUST NOT execute, inject, or parse $Bytes in that case.
++
++        $RelativePath must match a key of $script:IntegrityManifest exactly
++        (repository-relative path, forward slashes, no leading slash).
++    #>
++    param (
++        [Parameter(Mandatory = $true)]
++        [string]$RelativePath,
++
++        [Parameter(Mandatory = $true)]
++        [AllowEmptyCollection()]
++        [byte[]]$Bytes
++    )
++
++    $expected = $script:IntegrityManifest[$RelativePath]
++
++    if (-not $expected) {
++        Write-Host "SECURITY: '$RelativePath' has no entry in the integrity manifest embedded in this copy of run.ps1." -ForegroundColor Red
++        Write-Host "This copy of SpotifyPlus does not know this file and will not execute, inject, or parse it." -ForegroundColor Red
++        Write-Host "This is expected right after a new file is added upstream and can mean you simply need the latest run.ps1: https://github.com/kasurempukamba-collab/SpotifyPlus" -ForegroundColor Red
++        return $false
++    }
++
++    $actual = Get-Sha256Hex -Bytes $Bytes
++
++    if ($actual -ne $expected) {
++        Write-Host "SECURITY: integrity check failed for '$RelativePath'." -ForegroundColor Red
++        Write-Host "  Expected SHA-256: $expected" -ForegroundColor Red
++        Write-Host "  Actual   SHA-256: $actual" -ForegroundColor Red
++        Write-Host "The file currently served by the SpotifyPlus repository no longer matches the version that was reviewed and pinned when this copy of run.ps1 was released." -ForegroundColor Red
++        Write-Host "This can simply mean the repository has moved on since your copy of run.ps1 was downloaded (get the latest run.ps1), or it can mean the file was tampered with in transit or on the server." -ForegroundColor Red
++        Write-Host "For your safety, SpotifyPlus will not execute, inject, or use this file. Get the latest run.ps1 from https://github.com/kasurempukamba-collab/SpotifyPlus and try again." -ForegroundColor Red
++        return $false
++    }
++
++    return $true
++}
++
++function Get-RawBytesOrNull {
++    <#
++        Minimal, dependency-free raw byte downloader. Used only by code that
++        runs before the retrying Get() helper (defined further below) exists
++        yet, such as CallLang. Returns $null on any failure instead of
++        throwing, so callers can produce their own clear error message (the
++        language table is not loaded yet this early in the script, so error
++        text here cannot be localized).
++    #>
++    param (
++        [Parameter(Mandatory = $true)]
++        [string]$Url
++    )
++
++    $webClient = New-Object System.Net.WebClient
++    try {
++        return $webClient.DownloadData($Url)
++    }
++    catch {
++        return $null
++    }
++    finally {
++        $webClient.Dispose()
++    }
++}
++
+ function Format-LanguageCode {
+ 
+     # Normalizes and confirms support of the selected language.
+@@ -417,14 +598,25 @@ function Get-Link {
+ function CallLang($clg) {
+ 
+     $ProgressPreference = 'SilentlyContinue'
++    $relativePath = "scripts/installer-lang/$clg.ps1"
+ 
+     try {
+-        $response = (iwr -Uri (Get-Link -e "/scripts/installer-lang/$clg.ps1") -UseBasicParsing).Content
+-        if ($mirror) { $response = [System.Text.Encoding]::UTF8.GetString($response) }
++        $bytes = Get-RawBytesOrNull -Url (Get-Link -e "/$relativePath")
++
++        if ($null -eq $bytes) {
++            throw "Could not download the language file from the SpotifyPlus repository. Check your internet connection and try again."
++        }
++
++        if (-not (Assert-TrustedResource -RelativePath $relativePath -Bytes $bytes)) {
++            throw "Integrity check failed for the language file (see SECURITY details above)."
++        }
++
++        $response = [System.Text.Encoding]::UTF8.GetString($bytes)
+         Invoke-Expression $response
+     }
+     catch {
+-        Write-Host "Error loading $clg language"
++        Write-Host "Error loading $clg language" -ForegroundColor Red
++        Write-Host $_.Exception.Message -ForegroundColor Red
+         if (-not $no_pause) { Pause }
+         Exit
+     }
+@@ -447,6 +639,22 @@ if ($old_lyrics) {
+     Write-Host
+ }
+ 
++if ($sendversion_off) {
++    Write-Warning @"
++-sendversion_off is deprecated and no longer needed
++    The client-version reporting helper (checkVersion.js) is now disabled by default.
++    Use -sendversion_on instead if you want to opt in to it. See README "Privacy & telemetry".
++    Remove -sendversion_off from your command line
++"@
++    Write-Host
++}
++
++if ($sendversion_on) {
++    Write-Host "Note: -sendversion_on is enabled." -ForegroundColor Yellow
++    Write-Host "checkVersion.js will read the Spotify client's own authorization token from its network requests and use it to query Spotify's official update endpoint, then report the discovered download links plus basic client diagnostics (never the token itself) to a third-party endpoint operated by the SpotX project. See README `"Privacy & telemetry`" for the exact data flow." -ForegroundColor Yellow
++    Write-Host
++}
++
+ # Check version Windows
+ $os = Get-CimInstance -ClassName "Win32_OperatingSystem" -ErrorAction SilentlyContinue
+ if ($os) {
+@@ -609,6 +817,19 @@ function Resolve-SpotifyInstallerVersionFromManifest {
+         throw "Spotify version $($selectedVersion.Name) has unexpected Windows $Architecture asset in versions manifest"
+     }
+ 
++    $sizeValue = $architectureAsset.Value.size
++    if ($sizeValue) {
++        $parsedSize = [int64]0
++        if ([int64]::TryParse([string]$sizeValue, [ref]$parsedSize) -and $parsedSize -gt 0) {
++            # Stashed for a best-effort post-download size check in downloadSp's
++            # caller. Not a cryptographic guarantee (see the integrity-manifest
++            # comment near the top of this file for why one isn't currently
++            # possible for the Spotify installer itself), but it does catch
++            # truncated downloads and a same-size-unaware asset swap.
++            $script:ResolvedInstallerSizeBytes = $parsedSize
++        }
++    }
++
+     return $fullVersion
+ }
+ 
+@@ -617,6 +838,9 @@ $spotifyTemporaryDownloadBaseUrl = "https://loadspot.amd64fox1.workers.dev/tempo
+ $spotifyTemporaryDownloadVersion = "1.2.86.502.g8cd7fb22"
+ $spotifyVersionsManifestUrl = Get-Link -e "/table/versions.json" -Owner "LoaderSpot" -Repository "table"
+ $systemArchitecture = Get-SystemArchitecture
++# Populated by Resolve-SpotifyInstallerVersionFromManifest, if/when it runs, for
++# the best-effort post-download size check performed after downloadSp() below.
++$script:ResolvedInstallerSizeBytes = $null
+ 
+ $match_v = "^(?<version>\d+\.\d+\.\d+(?:\.\d+(?:\.g[0-9a-f]{8})?)?)(?:-\d+)?$"
+ $versionIsSupported = $false
+@@ -703,9 +927,43 @@ function Get {
+         [string]$Url,
+         [int]$MaxRetries = 3,
+         [int]$RetrySeconds = 3,
+-        [string]$OutputPath
++        [string]$OutputPath,
++        # When set, returns the response body as raw, unmodified [byte[]]
++        # instead of letting Invoke-RestMethod auto-parse/auto-decode it.
++        # This is required for SHA-256 integrity verification to be
++        # byte-accurate: relying on Invoke-RestMethod's automatic
++        # content-type-based string decoding for that purpose is not safe,
++        # since a hash computed after re-encoding an auto-decoded string is
++        # not guaranteed to reproduce the original bytes. -OutputPath is
++        # intentionally NOT honored together with -Raw: callers that need
++        # both must verify the returned bytes first and write the file
++        # themselves afterwards, so nothing unverified ever touches disk.
++        [switch]$Raw
+     )
+ 
++    if ($Raw) {
++        for ($i = 0; $i -lt $MaxRetries; $i++) {
++            $webClient = New-Object System.Net.WebClient
++            try {
++                return $webClient.DownloadData($Url)
++            }
++            catch {
++                Write-Warning "Attempt $($i+1) of $MaxRetries failed: $_"
++                if ($i -lt $MaxRetries - 1) {
++                    Start-Sleep -Seconds $RetrySeconds
++                }
++            }
++            finally {
++                $webClient.Dispose()
++            }
++        }
++
++        Write-Host
++        Write-Host "ERROR: " -ForegroundColor Red -NoNewline; Write-Host "Failed to retrieve data from $Url" -ForegroundColor White
++        Write-Host
++        return $null
++    }
++
+     $params = @{
+         Uri        = $Url
+         TimeoutSec = 15
+@@ -762,7 +1020,28 @@ function Get-PatchesJson {
+         }
+     }
+ 
+-    return Get -Url (Get-Link -e "/patches/patches.json") -RetrySeconds 5
++    $relativePath = "patches/patches.json"
++    $bytes = Get -Url (Get-Link -e "/$relativePath") -RetrySeconds 5 -Raw
++
++    if ($null -eq $bytes) {
++        return $null
++    }
++
++    if (-not (Assert-TrustedResource -RelativePath $relativePath -Bytes $bytes)) {
++        return $null
++    }
++
++    try {
++        $jsonContent = [System.Text.Encoding]::UTF8.GetString($bytes)
++        return $jsonContent | ConvertFrom-Json -ErrorAction Stop
++    }
++    catch {
++        Write-Host
++        Write-Host "Failed to parse patches.json" -ForegroundColor Red
++        Write-Host $_.Exception.Message -ForegroundColor Red
++        Write-Host
++        return $null
++    }
+ }
+ 
+ 
+@@ -1977,6 +2256,30 @@ if (-not $SpotifyPath -and (-not $spotifyInstalled -or $upgrade_client)) {
+     downloadSp -DownloadFolder $tempDirectory
+     Write-Host
+ 
++    # Best-effort integrity check: compare the downloaded installer's size
++    # against the size published in the LoaderSpot version manifest, when
++    # available. This is NOT a cryptographic check (the manifest does not
++    # publish a hash - see the integrity-manifest comment near the top of
++    # this file) and cannot catch a same-size tampered file, but it does
++    # catch truncated/corrupted downloads and a wrong asset being served.
++    if ($script:ResolvedInstallerSizeBytes) {
++        $downloadedInstallerPath = Join-Path $tempDirectory 'SpotifySetup.exe'
++        if (Test-Path -LiteralPath $downloadedInstallerPath) {
++            $actualInstallerSize = (Get-Item -LiteralPath $downloadedInstallerPath).Length
++            if ($actualInstallerSize -ne $script:ResolvedInstallerSizeBytes) {
++                Write-Host
++                Write-Host "SECURITY: the downloaded Spotify installer size does not match the size published in the version manifest." -ForegroundColor Red
++                Write-Host ("  Expected: {0} bytes" -f $script:ResolvedInstallerSizeBytes) -ForegroundColor Red
++                Write-Host ("  Actual:   {0} bytes" -f $actualInstallerSize) -ForegroundColor Red
++                Write-Host "SpotifyPlus will not install or patch a file it cannot verify. This is usually a corrupted/incomplete download - try again. If it keeps happening, please open an issue on the SpotifyPlus repository." -ForegroundColor Red
++                Write-Host
++                Remove-Item -LiteralPath $downloadedInstallerPath -Force -ErrorAction SilentlyContinue
++                Remove-TempDirectory -Directory $tempDirectory
++                Stop-Script
++            }
++        }
++    }
++
+     Start-Sleep -Milliseconds 200
+ 
+     # Client installation
+@@ -2009,11 +2312,17 @@ $ch = $null
+ # updated Russian translation
+ if ($langCode -eq 'ru' -and [version]$offline -ge [version]"1.1.92.644") {
+ 
+-    $webjsonru = Get -Url (Get-Link -e "/patches/Augmented%20translation/ru.json")
++    $ruRelativePath = "patches/Augmented translation/ru.json"
++    $ruBytes = Get -Url (Get-Link -e "/patches/Augmented%20translation/ru.json") -Raw
+ 
+-    if ($webjsonru -ne $null) {
+-
+-        $ru = $true
++    if ($null -ne $ruBytes -and (Assert-TrustedResource -RelativePath $ruRelativePath -Bytes $ruBytes)) {
++        try {
++            $webjsonru = [System.Text.Encoding]::UTF8.GetString($ruBytes) | ConvertFrom-Json -ErrorAction Stop
++            $ru = $true
++        }
++        catch {
++            Write-Warning "Failed to parse the Russian translation augmentation: $($_.Exception.Message)"
++        }
+     }
+ }
+ 
+@@ -5255,11 +5564,13 @@ if ($test_spa) {
+     # Forced exp
+     extract -counts 'one' -method 'zip' -name 'xpui.js' -helper 'ForcedExp' -add $webjson.others.byspotx.add
+ 
+-    # Send new versions
+-    if (!($sendversion_off)) {
+-        $checkVersion = Get -Url (Get-Link -e "/js-helper/checkVersion.js")
++    # Send new versions (opt-in only, see -sendversion_on help text and README "Privacy & telemetry")
++    if ($sendversion_on) {
++        $checkVersionRelativePath = "js-helper/checkVersion.js"
++        $checkVersionBytes = Get -Url (Get-Link -e "/$checkVersionRelativePath") -Raw
+ 
+-        if ($checkVersion -ne $null) {
++        if ($null -ne $checkVersionBytes -and (Assert-TrustedResource -RelativePath $checkVersionRelativePath -Bytes $checkVersionBytes)) {
++            $checkVersion = [System.Text.Encoding]::UTF8.GetString($checkVersionBytes)
+             injection -p $xpui_spa_patch -f "spotx-helper" -n "checkVersion.js" -c $checkVersion
+         }
+     }
+@@ -5267,9 +5578,12 @@ if ($test_spa) {
+     # Hiding Ad-like sections or turn off podcasts from the homepage
+     if ($podcast_off -or $adsections_off -or $canvashome_off) {
+ 
+-        $section = Get -Url (Get-Link -e "/js-helper/sectionBlock.js")
++        $sectionRelativePath = "js-helper/sectionBlock.js"
++        $sectionBytes = Get -Url (Get-Link -e "/$sectionRelativePath") -Raw
+ 
+-        if ($section -ne $null) {
++        if ($null -ne $sectionBytes -and (Assert-TrustedResource -RelativePath $sectionRelativePath -Bytes $sectionBytes)) {
++
++            $section = [System.Text.Encoding]::UTF8.GetString($sectionBytes)
+ 
+             $calltype = switch ($true) {
+                 ($podcast_off -and $adsections_off -and $canvashome_off) { "'all'"; break }
+@@ -5293,27 +5607,39 @@ if ($test_spa) {
+     # goofy History
+     if ($urlform_goofy -and $idbox_goofy) {
+ 
+-        $goofy = Get -Url (Get-Link -e "/js-helper/goofyHistory.js")
++        $goofyRelativePath = "js-helper/goofyHistory.js"
++        $goofyBytes = Get -Url (Get-Link -e "/$goofyRelativePath") -Raw
+ 
+-        if ($goofy -ne $null) {
++        if ($null -ne $goofyBytes -and (Assert-TrustedResource -RelativePath $goofyRelativePath -Bytes $goofyBytes)) {
+ 
++            $goofy = [System.Text.Encoding]::UTF8.GetString($goofyBytes)
+             injection -p $xpui_spa_patch -f "spotx-helper" -n "goofyHistory.js" -c $goofy
+         }
+     }
+ 
+     # Static color for lyrics
+     if ($lyrics_stat) {
+-        $rulesContent = Get -Url (Get-Link -e "/css-helper/lyrics-color/rules.css")
+-        $colorsContent = Get -Url (Get-Link -e "/css-helper/lyrics-color/colors.css")
++        $rulesRelativePath = "css-helper/lyrics-color/rules.css"
++        $colorsRelativePath = "css-helper/lyrics-color/colors.css"
++        $rulesBytes = Get -Url (Get-Link -e "/$rulesRelativePath") -Raw
++        $colorsBytes = Get -Url (Get-Link -e "/$colorsRelativePath") -Raw
++
++        $rulesOk = $null -ne $rulesBytes -and (Assert-TrustedResource -RelativePath $rulesRelativePath -Bytes $rulesBytes)
++        $colorsOk = $null -ne $colorsBytes -and (Assert-TrustedResource -RelativePath $colorsRelativePath -Bytes $colorsBytes)
++
++        if ($rulesOk -and $colorsOk) {
++            $rulesContent = [System.Text.Encoding]::UTF8.GetString($rulesBytes)
++            $colorsContent = [System.Text.Encoding]::UTF8.GetString($colorsBytes)
+ 
+-        $colorsContent = $colorsContent -replace '{{past}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.pasttext)"
+-        $colorsContent = $colorsContent -replace '{{current}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.current)"
+-        $colorsContent = $colorsContent -replace '{{next}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.next)"
+-        $colorsContent = $colorsContent -replace '{{hover}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.hover)"
+-        $colorsContent = $colorsContent -replace '{{background}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.background)"
+-        $colorsContent = $colorsContent -replace '{{musixmatch}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.maxmatch)"
++            $colorsContent = $colorsContent -replace '{{past}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.pasttext)"
++            $colorsContent = $colorsContent -replace '{{current}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.current)"
++            $colorsContent = $colorsContent -replace '{{next}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.next)"
++            $colorsContent = $colorsContent -replace '{{hover}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.hover)"
++            $colorsContent = $colorsContent -replace '{{background}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.background)"
++            $colorsContent = $colorsContent -replace '{{musixmatch}}', "$($webjson.others.themelyrics.theme.$lyrics_stat.maxmatch)"
+ 
+-        injection -p $xpui_spa_patch -f "spotx-helper/lyrics-color" -n @("rules.css", "colors.css") -c @($rulesContent, $colorsContent) -i "rules.css"
++            injection -p $xpui_spa_patch -f "spotx-helper/lyrics-color" -n @("rules.css", "colors.css") -c @($rulesContent, $colorsContent) -i "rules.css"
++        }
+ 
+     }
+     extract -counts 'one' -method 'zip' -name 'home-v2.js' -helper 'HomeV2-js'
+@@ -5491,7 +5817,12 @@ if ($spotify_binary_bak -eq $dll_bak -and !$premium -and [version]$offline -ge [
+ # fix login for old versions
+ if ([version]$offline -ge [version]"1.1.87.612" -and [version]$offline -le [version]"1.2.5.1006") {
+     $login_spa = Join-Path (Join-Path $spotifyDirectory 'Apps') 'login.spa'
+-    Get -Url (Get-Link -e "/res/login.spa") -OutputPath $login_spa
++    $loginSpaRelativePath = "res/login.spa"
++    $loginSpaBytes = Get -Url (Get-Link -e "/$loginSpaRelativePath") -Raw
++
++    if ($null -ne $loginSpaBytes -and (Assert-TrustedResource -RelativePath $loginSpaRelativePath -Bytes $loginSpaBytes)) {
++        [System.IO.File]::WriteAllBytes($login_spa, $loginSpaBytes)
++    }
+ }
+ 
+ # Disable Startup client
+diff --git a/scripts/Update-IntegrityManifest.ps1 b/scripts/Update-IntegrityManifest.ps1
+new file mode 100644
+index 0000000..0b4a8fe
+--- /dev/null
++++ b/scripts/Update-IntegrityManifest.ps1
+@@ -0,0 +1,197 @@
++<#
++.SYNOPSIS
++    Regenerates the $script:IntegrityManifest hashtable embedded in run.ps1.
++
++.DESCRIPTION
++    Run this from anywhere in the repository (or pass -RepoRoot) before
++    publishing a new release, whenever any tracked resource file below has
++    changed, or whenever a new one is added. It computes the current SHA-256
++    of every tracked file and rewrites the $script:IntegrityManifest
++    assignment inside run.ps1 in place. The existing assignment is located
++    precisely via the PowerShell AST, so this script will not accidentally
++    touch anything else in run.ps1, and it re-parses run.ps1 after writing
++    to confirm the result is still syntactically valid.
++
++    If you add a new resource that run.ps1 fetches from this repository at
++    runtime, add its relative path to $TrackedPaths below AND add a
++    corresponding Assert-TrustedResource check at its fetch site in run.ps1.
++    This script only keeps hash *values* current for paths it already knows
++    about; it does not add new fetch/verification call sites for you.
++
++.PARAMETER RepoRoot
++    Path to the repository root. Defaults to the parent of this script's
++    directory (i.e. assumes this script stays at scripts/Update-IntegrityManifest.ps1).
++
++.PARAMETER CheckOnly
++    Report whether the manifest is out of date (exit code 1) without writing
++    anything. Useful in CI to catch a forgotten manifest update before merge.
++
++.EXAMPLE
++    scripts/Update-IntegrityManifest.ps1
++
++.EXAMPLE
++    scripts/Update-IntegrityManifest.ps1 -CheckOnly
++#>
++
++[CmdletBinding()]
++param(
++    [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
++    [switch]$CheckOnly
++)
++
++$ErrorActionPreference = 'Stop'
++
++$RunPs1Path = Join-Path $RepoRoot 'run.ps1'
++
++if (-not (Test-Path -LiteralPath $RunPs1Path -PathType Leaf)) {
++    throw "run.ps1 not found at $RunPs1Path (wrong -RepoRoot?)"
++}
++
++# Every file run.ps1 fetches from THIS repository at runtime (via Get-Link
++# with the default Owner/Repository) and verifies with Assert-TrustedResource.
++# Keep the fixed entries here in sync with the fetch sites in run.ps1; the
++# installer-lang entries are discovered automatically below.
++$TrackedPaths = @(
++    'js-helper/checkVersion.js'
++    'js-helper/goofyHistory.js'
++    'js-helper/sectionBlock.js'
++    'css-helper/lyrics-color/colors.css'
++    'css-helper/lyrics-color/rules.css'
++    'patches/patches.json'
++    'patches/Augmented translation/ru.json'
++    'res/login.spa'
++)
++
++$langDir = Join-Path $RepoRoot 'scripts/installer-lang'
++if (Test-Path -LiteralPath $langDir) {
++    $langFiles = Get-ChildItem -LiteralPath $langDir -Filter '*.ps1' |
++        Sort-Object Name |
++        ForEach-Object { "scripts/installer-lang/$($_.Name)" }
++    $TrackedPaths = @($TrackedPaths) + @($langFiles)
++}
++
++# Safety net: warn about files on disk, in directories that are supposed to
++# be fully tracked, that aren't in $TrackedPaths. This does not fail the
++# script (a new file might be intentionally not-yet-wired-up), but it is
++# easy to miss otherwise.
++$directoriesExpectedFullyTracked = @(
++    'js-helper'
++    'css-helper/lyrics-color'
++)
++foreach ($dir in $directoriesExpectedFullyTracked) {
++    $full = Join-Path $RepoRoot $dir
++    if (Test-Path -LiteralPath $full) {
++        Get-ChildItem -LiteralPath $full -File | ForEach-Object {
++            $rel = "$dir/$($_.Name)"
++            if ($TrackedPaths -notcontains $rel) {
++                Write-Warning "On disk but NOT in `$TrackedPaths (add it if run.ps1 should fetch+verify it): $rel"
++            }
++        }
++    }
++}
++
++$missing = New-Object System.Collections.Generic.List[string]
++$manifest = [ordered]@{}
++
++foreach ($rel in $TrackedPaths) {
++    $full = Join-Path $RepoRoot $rel
++    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
++        $missing.Add($rel)
++        continue
++    }
++
++    $bytes = [System.IO.File]::ReadAllBytes($full)
++    $sha256 = [System.Security.Cryptography.SHA256]::Create()
++    try {
++        $hashBytes = $sha256.ComputeHash($bytes)
++    }
++    finally {
++        $sha256.Dispose()
++    }
++
++    $sb = [System.Text.StringBuilder]::new($hashBytes.Length * 2)
++    foreach ($b in $hashBytes) {
++        [void]$sb.Append($b.ToString('x2'))
++    }
++    $manifest[$rel] = $sb.ToString()
++}
++
++if ($missing.Count -gt 0) {
++    throw "`$TrackedPaths references file(s) that do not exist on disk:`n$($missing -join "`n")`nRemove them from `$TrackedPaths, or restore the files."
++}
++
++# Build the replacement hashtable literal text. Keys are sorted so the
++# generated text (and its diff against the previous version) is stable and
++# does not depend on filesystem enumeration order.
++$lines = New-Object System.Collections.Generic.List[string]
++[void]$lines.Add('$script:IntegrityManifest = @{')
++foreach ($key in ($manifest.Keys | Sort-Object)) {
++    $escapedKey = $key.Replace("'", "''")
++    [void]$lines.Add("    '$escapedKey' = '$($manifest[$key])'")
++}
++[void]$lines.Add('}')
++$newLiteralText = ($lines -join "`n")
++
++# Locate the existing assignment precisely via the AST.
++$parseErrors = $null
++$tokens = $null
++$ast = [System.Management.Automation.Language.Parser]::ParseFile($RunPs1Path, [ref]$tokens, [ref]$parseErrors)
++if ($parseErrors -and $parseErrors.Count -gt 0) {
++    throw "run.ps1 currently has $($parseErrors.Count) parse error(s); refusing to touch it. Fix those first, then re-run this script."
++}
++
++$assignStmt = $ast.Find({
++        param($node)
++        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
++        $node.Left.Extent.Text -eq '$script:IntegrityManifest'
++    }, $true)
++
++if (-not $assignStmt) {
++    throw "Could not find the `$script:IntegrityManifest assignment in run.ps1. Has it been renamed or removed?"
++}
++
++# Read raw bytes and decode manually (rather than Get-Content -Raw) so we
++# know exactly what encoding we are dealing with, and can write back the
++# same one. run.ps1 is UTF-8 without a byte order mark; introducing a BOM
++# (which Set-Content -Encoding UTF8 does on Windows PowerShell 5.1) would
++# make every future diff of this file noisy for no reason.
++$originalBytes = [System.IO.File]::ReadAllBytes($RunPs1Path)
++$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
++$originalText = $utf8NoBom.GetString($originalBytes)
++
++$oldLiteralText = $assignStmt.Extent.Text
++
++if ($oldLiteralText -eq $newLiteralText) {
++    Write-Host "Integrity manifest is already up to date ($($manifest.Count) entries) - no changes needed." -ForegroundColor Green
++    exit 0
++}
++
++if ($CheckOnly) {
++    Write-Host "Integrity manifest is OUT OF DATE. Run this script without -CheckOnly to update it." -ForegroundColor Yellow
++    exit 1
++}
++
++$startIndex = $originalText.IndexOf($oldLiteralText, [System.StringComparison]::Ordinal)
++if ($startIndex -lt 0) {
++    throw "Could not locate the exact text of the existing manifest assignment for replacement (unexpected - the file may use different line endings than the AST extent)."
++}
++
++$secondIndex = $originalText.IndexOf($oldLiteralText, $startIndex + 1, [System.StringComparison]::Ordinal)
++if ($secondIndex -ge 0) {
++    throw "The existing manifest assignment text is not unique in run.ps1; refusing to guess which occurrence to replace. Please update it manually this once."
++}
++
++$updatedText = $originalText.Substring(0, $startIndex) + $newLiteralText + $originalText.Substring($startIndex + $oldLiteralText.Length)
++
++[System.IO.File]::WriteAllText($RunPs1Path, $updatedText, $utf8NoBom)
++
++# Re-parse to make sure the edit didn't break anything.
++$parseErrors2 = $null
++$tokens2 = $null
++[void][System.Management.Automation.Language.Parser]::ParseFile($RunPs1Path, [ref]$tokens2, [ref]$parseErrors2)
++if ($parseErrors2 -and $parseErrors2.Count -gt 0) {
++    throw "run.ps1 has $($parseErrors2.Count) parse error(s) AFTER the update - this should not happen. The file has already been written; use git diff / git checkout to inspect or revert, then report this as a bug."
++}
++
++Write-Host "Updated `$script:IntegrityManifest in run.ps1 with $($manifest.Count) entries." -ForegroundColor Green
++Write-Host "Review the diff (git diff run.ps1) and commit both the changed resource file(s) and run.ps1 together."
